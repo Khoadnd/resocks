@@ -14,14 +14,14 @@ import (
 
 // RunRelay is the counterpart of RunProxy and acts as an exit node for the
 // proxy connections tunneled through the provided connection.
-func RunRelay(ctx context.Context, conn net.Conn) error {
-	return RunRelayWithEventCallback(ctx, conn, DefaultEventCallback)
+func RunRelay(ctx context.Context, conn net.Conn, username string, password string) error {
+	return RunRelayWithEventCallback(ctx, conn, DefaultEventCallback, username, password)
 }
 
 // RunRelayWithEventCallback is like RunRelay but it allows to specify a custom
 // event callback instead of DefaultEventCallback. If callback is nil, events
 // are ignored.
-func RunRelayWithEventCallback(ctx context.Context, conn net.Conn, callback func(Event)) error {
+func RunRelayWithEventCallback(ctx context.Context, conn net.Conn, callback func(Event), username string, password string) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -45,7 +45,16 @@ func RunRelayWithEventCallback(ctx context.Context, conn net.Conn, callback func
 
 	defer errConn.Close() //nolint:errcheck
 
-	socksServer, err := socks5.New(&socks5.Config{Logger: newRemoteLogger(errConn, callback)})
+	creds := socks5.StaticCredentials{
+		username: password,
+	}
+
+	cator := socks5.UserPassAuthenticator{Credentials: creds}
+
+	socksServer, err := socks5.New(&socks5.Config{
+		AuthMethods: []socks5.Authenticator{cator},
+		Logger:      newRemoteLogger(errConn, callback),
+	})
 	if err != nil {
 		return fmt.Errorf("initialize socks5 server: %w", err)
 	}

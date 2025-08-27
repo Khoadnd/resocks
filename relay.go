@@ -19,6 +19,8 @@ func relayCommand() *cobra.Command {
 	reconnectAfter := time.Duration(0)
 	connectionKey := fromEnvWithFallback(ConnectionKeyEnvVariable, defaultConnectionKey)
 	insecure := false
+	username := "vip"
+	password := "pro"
 
 	cobraArgs := cobra.ExactArgs(1)
 	if defaultConnectBackAddress != "" {
@@ -50,6 +52,8 @@ func relayCommand() *cobra.Command {
 				timeout,
 				reconnectAfter,
 				insecure,
+				username,
+				password,
 			)
 		},
 	}
@@ -64,12 +68,14 @@ func relayCommand() *cobra.Command {
 			ConnectionKeyEnvVariable))
 	flags.BoolVar(&insecure, "insecure", insecure,
 		"Don't check server certificate and only send client certificate when a connection key is specified")
+	flags.StringVarP(&username, "username", "u", username, "Username for socks5 authentication")
+	flags.StringVarP(&password, "password", "p", password, "Password for socks5 authentication")
 
 	return relayCmd
 }
 
 func runRemoteProxyRelay(connectBackAddr string, connectionKey string, timeout time.Duration,
-	reconnectAfter time.Duration, insecure bool,
+	reconnectAfter time.Duration, insecure bool, username string, password string,
 ) error {
 	tlsConfig, err := clientTLSConfig(connectionKey, insecure)
 	if err != nil {
@@ -77,7 +83,7 @@ func runRemoteProxyRelay(connectBackAddr string, connectionKey string, timeout t
 	}
 
 	for {
-		err := connectBackAndRelay(tlsConfig, connectBackAddr, timeout)
+		err := connectBackAndRelay(tlsConfig, connectBackAddr, timeout, username, password)
 		if err != nil {
 			if reconnectAfter == 0 {
 				return err
@@ -96,7 +102,9 @@ func runRemoteProxyRelay(connectBackAddr string, connectionKey string, timeout t
 	}
 }
 
-func connectBackAndRelay(tlsConfig *tls.Config, connectBackAddr string, timeout time.Duration) error {
+func connectBackAndRelay(tlsConfig *tls.Config, connectBackAddr string, timeout time.Duration,
+	username string, password string,
+) error {
 	conn, err := tls.DialWithDialer(&net.Dialer{Timeout: timeout}, "tcp", connectBackAddr, tlsConfig)
 	if err != nil {
 		return fmt.Errorf("dial: %w", err)
@@ -106,7 +114,7 @@ func connectBackAndRelay(tlsConfig *tls.Config, connectBackAddr string, timeout 
 
 	defer conn.Close() //nolint:errcheck
 
-	return proxyrelay.RunRelay(context.Background(), conn)
+	return proxyrelay.RunRelay(context.Background(), conn, username, password)
 }
 
 func clientTLSConfig(connectionKey string, insecure bool) (*tls.Config, error) {
