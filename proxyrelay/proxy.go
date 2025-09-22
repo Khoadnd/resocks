@@ -228,8 +228,10 @@ func handleLocalProxyConn(conn net.Conn, sess *yamux.Session) error {
 		globalTrafficMonitor.RecordConnectionLatency(connectLatency)
 
 		// Wrap connections with tracking
-		clientConn = NewTrackedConn(conn, globalTrafficMonitor, true, connID+"_client")     // client->relay is upload
-		relayConn = NewTrackedConn(yamuxConn, globalTrafficMonitor, false, connID+"_relay") // relay->client is download
+		// The client connection handles client<->proxy communication
+		// The relay connection handles proxy<->target communication
+		clientConn = NewTrackedConn(conn, globalTrafficMonitor, true, connID+"_client")     // client side
+		relayConn = NewTrackedConn(yamuxConn, globalTrafficMonitor, false, connID+"_relay") // relay side
 	}
 
 	var eg errgroup.Group

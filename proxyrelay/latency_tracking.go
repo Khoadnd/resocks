@@ -35,16 +35,19 @@ func (tc *TrackedConn) Read(b []byte) (n int, err error) {
 	readLatency := time.Since(start)
 
 	if n > 0 && tc.monitor != nil {
+		// Record processing latency (time spent in read operation)
+		tc.monitor.RecordProcessingLatency(readLatency)
+
+		// Track data flow based on connection type:
+		// - Client connection (isUpload=true): Reading means data coming from client (upload)
+		// - Relay connection (isUpload=false): Reading means data coming from target (download)
 		if tc.isUpload {
 			tc.monitor.AddUploadBytes(int64(n))
 		} else {
 			tc.monitor.AddDownloadBytes(int64(n))
 		}
 
-		// Record processing latency (time spent in read operation)
-		tc.monitor.RecordProcessingLatency(readLatency)
-
-		// If this is a response after a request, calculate potential RTT
+		// RTT calculation for download responses
 		if !tc.lastWriteTime.IsZero() && !tc.isUpload {
 			rtt := start.Sub(tc.lastWriteTime)
 			if rtt > 0 && rtt < 10*time.Second { // Reasonable RTT threshold
@@ -64,14 +67,17 @@ func (tc *TrackedConn) Write(b []byte) (n int, err error) {
 	writeLatency := time.Since(start)
 
 	if n > 0 && tc.monitor != nil {
-		if tc.isUpload {
-			tc.monitor.AddUploadBytes(int64(n))
-		} else {
-			tc.monitor.AddDownloadBytes(int64(n))
-		}
-
 		// Record processing latency (time spent in write operation)
 		tc.monitor.RecordProcessingLatency(writeLatency)
+
+		// Track data flow based on connection type:
+		// - Client connection (isUpload=true): Writing means data going to client (download)
+		// - Relay connection (isUpload=false): Writing means data going to target (upload)
+		if tc.isUpload {
+			tc.monitor.AddDownloadBytes(int64(n))
+		} else {
+			tc.monitor.AddUploadBytes(int64(n))
+		}
 
 		tc.lastWriteTime = time.Now()
 	}
