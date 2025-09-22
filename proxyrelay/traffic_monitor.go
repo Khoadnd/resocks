@@ -26,6 +26,7 @@ type TrafficMetrics struct {
 	// Connection statistics
 	ActiveConnections int   `json:"active_connections"`
 	TotalConnections  int64 `json:"total_connections"`
+	TunnelActive      bool  `json:"tunnel_active"`
 }
 
 // LatencyStats holds latency measurement data
@@ -64,6 +65,7 @@ type TrafficMonitor struct {
 	// Connection tracking
 	activeConnections map[string]*ConnectionInfo
 	totalConnections  int64
+	tunnelActive      int32 // Using int32 for atomic operations (0=false, 1=true)
 
 	metricsFile string
 	interval    time.Duration
@@ -195,6 +197,20 @@ func (tm *TrafficMonitor) UpdateConnectionLatency(connID string, latency time.Du
 	tm.RecordConnectionLatency(latency)
 }
 
+// SetTunnelActive sets the tunnel active status (when resocks client connects to server)
+func (tm *TrafficMonitor) SetTunnelActive(active bool) {
+	if active {
+		atomic.StoreInt32(&tm.tunnelActive, 1)
+	} else {
+		atomic.StoreInt32(&tm.tunnelActive, 0)
+	}
+}
+
+// IsTunnelActive returns whether the tunnel is currently active
+func (tm *TrafficMonitor) IsTunnelActive() bool {
+	return atomic.LoadInt32(&tm.tunnelActive) == 1
+}
+
 func (tm *TrafficMonitor) monitorLoop() {
 	ticker := time.NewTicker(tm.interval)
 	defer ticker.Stop()
@@ -232,6 +248,7 @@ func (tm *TrafficMonitor) updateMetrics() {
 		TotalDown:         formatBytes(atomic.LoadInt64(&tm.totalDown)),
 		ActiveConnections: len(tm.activeConnections),
 		TotalConnections:  atomic.LoadInt64(&tm.totalConnections),
+		TunnelActive:      tm.IsTunnelActive(),
 	}
 
 	// Calculate latency metrics

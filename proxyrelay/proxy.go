@@ -39,9 +39,19 @@ func RunProxyWithEventCallback(
 		callback(Event{Type: TypeRelayConnected, Data: relayConn.RemoteAddr().String()})
 	}
 
+	// Set tunnel as active when relay connection is established
+	if globalTrafficMonitor != nil {
+		globalTrafficMonitor.SetTunnelActive(true)
+	}
+
 	err := handleRelayConnection(ctx, relayConn, socks5ListenAddr, callback)
 	if errors.Is(err, net.ErrClosed) {
 		err = nil
+	}
+
+	// Set tunnel as inactive when relay connection ends
+	if globalTrafficMonitor != nil {
+		globalTrafficMonitor.SetTunnelActive(false)
 	}
 
 	if callback != nil {
@@ -65,6 +75,10 @@ func handleRelayConnection(ctx context.Context, relayConn net.Conn, proxyAddr st
 
 	client, err := yamux.Client(relayConn, yamuxCfg())
 	if err != nil {
+		// Set tunnel as inactive on connection failure
+		if globalTrafficMonitor != nil {
+			globalTrafficMonitor.SetTunnelActive(false)
+		}
 		return fmt.Errorf("initialize multiplexer: %w", err)
 	}
 
@@ -74,9 +88,17 @@ func handleRelayConnection(ctx context.Context, relayConn net.Conn, proxyAddr st
 	errConn, err := client.Open()
 	if err != nil {
 		if errors.Is(err, yamux.ErrSessionShutdown) || errors.As(err, &tlsErr) {
+			// Set tunnel as inactive on invalid connection key
+			if globalTrafficMonitor != nil {
+				globalTrafficMonitor.SetTunnelActive(false)
+			}
 			return fmt.Errorf("invalid connection key")
 		}
 
+		// Set tunnel as inactive on connection failure
+		if globalTrafficMonitor != nil {
+			globalTrafficMonitor.SetTunnelActive(false)
+		}
 		return fmt.Errorf("open error notification connection: %w", err)
 	}
 
