@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"time"
 
 	"github.com/RedTeamPentesting/resocks/proxyrelay"
 
@@ -22,6 +23,8 @@ func listenCommand() *cobra.Command {
 	connectionKey := fromEnvWithFallback(ConnectionKeyEnvVariable, defaultConnectionKey)
 	insecure := false
 	noColor := false
+	metricsFile := ""
+	metricsInterval := time.Second
 
 	listenCmd := &cobra.Command{
 		Use:   "listen",
@@ -34,6 +37,8 @@ func listenCommand() *cobra.Command {
 				connectionKey,
 				insecure,
 				noColor,
+				metricsFile,
+				metricsInterval,
 			)
 		},
 	}
@@ -50,13 +55,15 @@ func listenCommand() *cobra.Command {
 			ConnectionKeyEnvVariable))
 	listenFlags.BoolVar(&insecure, "insecure", insecure, "Disables client certificate validation")
 	listenFlags.BoolVar(&noColor, "no-color", noColor, "Disables colored output")
+	listenFlags.StringVar(&metricsFile, "metrics", metricsFile, "File path to write traffic metrics JSON with latency (disabled if empty)")
+	listenFlags.DurationVar(&metricsInterval, "metrics-interval", metricsInterval, "Interval for updating metrics file")
 
 	return listenCmd
 }
 
 func runLocalSocksProxy(
 	connectBackAddr string, proxyAddr string, abortOnDisconnect bool,
-	connectionKey string, insecure bool, noColor bool,
+	connectionKey string, insecure bool, noColor bool, metricsFile string, metricsInterval time.Duration,
 ) (err error) {
 	tlsConfig, key, err := serverTLSConfig(connectionKey, insecure)
 	if err != nil {
@@ -65,6 +72,16 @@ func runLocalSocksProxy(
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Initialize traffic monitoring with latency tracking if metrics file is specified
+	var monitor *proxyrelay.TrafficMonitor
+	if metricsFile != "" {
+		monitor = proxyrelay.NewTrafficMonitor(metricsFile, metricsInterval)
+		proxyrelay.SetTrafficMonitor(monitor)
+		monitor.Start()
+		defer monitor.Stop()
+		fmt.Printf("Traffic and latency monitoring enabled, writing metrics to: %s\n", metricsFile)
+	}
 
 	updateUI, waitForUItoShutdown, uiShutdown := startUI(key, connectBackAddr, proxyAddr, insecure, noColor)
 	defer func() {

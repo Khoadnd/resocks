@@ -9,10 +9,18 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/hashicorp/yamux"
 	"golang.org/x/sync/errgroup"
 )
+
+var globalTrafficMonitor *TrafficMonitor
+
+// SetTrafficMonitor sets the global traffic monitor
+func SetTrafficMonitor(monitor *TrafficMonitor) {
+	globalTrafficMonitor = monitor
+}
 
 // RunProxy starts a SOCKS server on socks5listenAddr that tunnels all incoming
 // connections through relayConn. The opposite site of the relayConn connection
@@ -179,9 +187,27 @@ func startLocalProxyServer(proxyAddr string, sess *yamux.Session, callback func(
 }
 
 func handleLocalProxyConn(conn net.Conn, sess *yamux.Session) error {
+	connectStart := time.Now()
 	yamuxConn, err := sess.Open()
+	connectLatency := time.Since(connectStart)
+
 	if err != nil {
 		return fmt.Errorf("open multiplexed connection: %w", err)
+	}
+
+	// Generate connection ID and start tracking
+	connID := ConnID(conn.LocalAddr(), conn.RemoteAddr())
+
+	// Wrap connections with traffic and latency monitoring if monitor is available
+	var clientConn, relayConn net.Conn = conn, yamuxConn
+	if globalTrafficMonitor != nil {
+		// Start tracking this connection
+		globalTrafficMonitor.StartConnection(connID)
+		globalTrafficMonitor.RecordConnectionLatency(connectLatency)
+
+		// Wrap connections with tracking
+		clientConn = NewTrackedConn(conn, globalTrafficMonitor, true, connID+"_client")     // client->relay is upload
+		relayConn = NewTrackedConn(yamuxConn, globalTrafficMonitor, false, connID+"_relay") // relay->client is download
 	}
 
 	var eg errgroup.Group
@@ -190,7 +216,7 @@ func handleLocalProxyConn(conn net.Conn, sess *yamux.Session) error {
 		defer conn.Close()      //nolint:errcheck
 		defer yamuxConn.Close() //nolint:errcheck
 
-		_, err := io.Copy(yamuxConn, conn)
+		_, err := io.Copy(relayConn, clientConn)
 		if err != nil && !errors.Is(err, net.ErrClosed) {
 			return fmt.Errorf("proxy->relay: %w", err)
 		}
@@ -202,7 +228,7 @@ func handleLocalProxyConn(conn net.Conn, sess *yamux.Session) error {
 		defer conn.Close()      //nolint:errcheck
 		defer yamuxConn.Close() //nolint:errcheck
 
-		_, err := io.Copy(conn, yamuxConn)
+		_, err := io.Copy(clientConn, relayConn)
 		if err != nil && !errors.Is(err, net.ErrClosed) {
 			return fmt.Errorf("relay->proxy: %w", err)
 		}
@@ -210,5 +236,12 @@ func handleLocalProxyConn(conn net.Conn, sess *yamux.Session) error {
 		return nil
 	})
 
-	return eg.Wait()
+	result := eg.Wait()
+
+	// End connection tracking
+	if globalTrafficMonitor != nil {
+		globalTrafficMonitor.EndConnection(connID)
+	}
+
+	return result
 }
